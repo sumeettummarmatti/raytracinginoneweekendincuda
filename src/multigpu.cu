@@ -44,7 +44,7 @@ static void renderOnDevice(GPUTile& tile, RenderConfig& cfg) {
     wavefrontRender(W, tileH, tile.yStart, cfg.ns,
                     cfg.cam, bvh, d_spheres,
                     nullptr, numSpheres,
-                    gb, tile.d_color);
+                    gb, tile.d_color, tile.deviceId);
 
     // denoise tile on this device
     DenoiserConfig dc{W, tileH};

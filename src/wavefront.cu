@@ -210,27 +210,20 @@ struct normalize_functor {
 
 // ── Host wavefront loop ───────────────────────────────────────────────────────
 
+// ── Host wavefront loop ───────────────────────────────────────────────────────
+
 void wavefrontRender(int width, int height, int yOffset, int ns,
                      camera& cam, LBVH& bvh, sphere* d_spheres,
                      material** d_materials, int numSpheres,
-                     GBuffers& gb, vec3* d_output) {
+                     GBuffers& gb, vec3* d_output, int gpuId) {
     int numRays = width * height;
-    int fullHeight = height; // If we wanted multigpu, we'd pass total height. We assume height is full here for now.
-    
-    // We adjust fullHeight based on aspect ratio in multigpu.cu if needed.
-    // Actually aspect = width / fullHeight, so fullHeight happens to be implicitly in camera aspect.
-    // For random y offset, let's just pass `height` for now or pass a custom fullHeight.
-    // Since camera aspect is built externally, cam.get_ray expects u,v in [0..1] range for the FULL sensor.
-    // Thus `y / fullHeight` represents `v`. We'll just define fullHeight = height outside multigpu.
-    // To support multigpu, let's add a hack: if yOffset > 0, we must be in a tile, so we'll pass fullH externally via a clean api or just leave it for now.
-    // We will hardcode fullHeight = 800 or infer it from width (assuming 1.5 aspect).
-    float aspect = 1.5f; // nx/ny = 1200/800 = 1.5
-    fullHeight = (int)(width / aspect);
+    float aspect = 1.5f; 
+    int fullHeight = (int)(width / aspect);
 
     RayState*   d_states; cudaMalloc(&d_states, numRays * sizeof(RayState));
     curandState* d_rng;   cudaMalloc(&d_rng,    numRays * sizeof(curandState));
 
-    // allocate queues (worst case: all rays in one queue)
+    // allocate queues once
     WavefrontQueues Q;
     cudaMalloc(&Q.lambertian, numRays * sizeof(int));
     cudaMalloc(&Q.dielectric, numRays * sizeof(int));
@@ -241,46 +234,47 @@ void wavefrontRender(int width, int height, int yOffset, int ns,
     dim3 blk2d(8, 8);
     dim3 grd2d((width+7)/8, (height+7)/8);
 
+    // Persistent index buffer to avoid re-allocations
+    thrust::device_vector<int> active(numRays);
+
     // sample accumulation loop
     for (int sample = 0; sample < ns; sample++) {
+        if (sample % 2 == 0 || sample == ns - 1) {
+            std::cerr << "[GPU " << gpuId << "] Rendering Sample " << sample + 1 << "/" << ns << "...\r";
+            std::cerr.flush();
+        }
+
         k_generateRays<<<grd2d, blk2d>>>(d_states, d_rng, cam, width, height, fullHeight, yOffset);
 
-        thrust::device_vector<int> active(numRays);
+        // Reset active indices
         thrust::sequence(active.begin(), active.end());
+        int N = numRays;
 
         bool firstBounce = true;
-        while (!active.empty()) {
-            int N = (int)active.size();
+        while (N > 0) {
             cudaMemset(Q.d_counts, 0, 4 * sizeof(int));
 
             k_intersect<<<(N+127)/128, 128>>>(
                 d_states, active.data().get(), N,
                 bvh, d_spheres, Q, gb, firstBounce);
-            cudaDeviceSynchronize();
+            
             firstBounce = false;
 
             int counts[4];
-            cudaMemcpy(counts, Q.d_counts, 4*sizeof(int),
-                       cudaMemcpyDeviceToHost);
+            cudaMemcpy(counts, Q.d_counts, 4*sizeof(int), cudaMemcpyDeviceToHost);
 
-            if (counts[0]) k_shadeLambertian<<<(counts[0]+127)/128,128>>>(
-                d_states, Q.lambertian, counts[0], d_rng);
-            if (counts[1]) k_shadeDielectric<<<(counts[1]+127)/128,128>>>(
-                d_states, Q.dielectric, counts[1], d_rng);
-            if (counts[2]) k_shadeMetal<<<(counts[2]+127)/128,128>>>(
-                d_states, Q.metal, counts[2], d_rng);
-            if (counts[3]) k_shadeMiss<<<(counts[3]+127)/128,128>>>(
-                d_states, Q.miss, counts[3]);
-            cudaDeviceSynchronize();
+            if (counts[0]) k_shadeLambertian<<<(counts[0]+127)/128,128>>>(d_states, Q.lambertian, counts[0], d_rng);
+            if (counts[1]) k_shadeDielectric<<<(counts[1]+127)/128,128>>>(d_states, Q.dielectric, counts[1], d_rng);
+            if (counts[2]) k_shadeMetal<<<(counts[2]+127)/128,128>>>(d_states, Q.metal, counts[2], d_rng);
+            if (counts[3]) k_shadeMiss<<<(counts[3]+127)/128,128>>>(d_states, Q.miss, counts[3]);
 
             // compact: remove dead rays
-            auto newEnd = thrust::remove_if(
-                active.begin(), active.end(),
-                is_alive(d_states));
-            active.erase(newEnd, active.end());
+            auto newEnd = thrust::remove_if(active.begin(), active.begin() + N, is_alive(d_states));
+            N = (int)(newEnd - active.begin());
         }
         k_accumulate<<<(numRays+127)/128,128>>>(d_states, d_output, numRays);
     }
+    std::cerr << "[GPU " << gpuId << "] Finished " << ns << " samples.             \n";
 
     // normalize by sample count
     int totalPx = width * height;

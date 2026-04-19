@@ -13,4 +13,4 @@ void wavefrontRender(
     int width, int height, int yOffset, int ns,
     camera& cam, LBVH& bvh, sphere* d_spheres,
     material** d_materials, int numSpheres,
-    GBuffers& gb, vec3* d_output);
+    GBuffers& gb, vec3* d_output, int gpuId);

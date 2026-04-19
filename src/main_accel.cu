@@ -12,7 +12,6 @@ void buildRandomScene(std::vector<sphere>& h_spheres, std::vector<material*>& h_
     h_mats.push_back(new lambertian(vec3(0.5, 0.5, 0.5)));
     h_spheres.push_back(sphere(vec3(0,-1000,0), 1000, h_mats.back()));
 
-    int i = 1;
     for(int a = -11; a < 11; a++) {
         for(int b = -11; b < 11; b++) {
             float choose_mat = RND;
