@@ -18,10 +18,6 @@ find_package(OpenImageDenoise QUIET)
 #      Including sphere.cu would cause an ODR violation (two definitions).
 add_executable(rt_accel
     src/main_accel.cu
-    src/lbvh.cu
-    src/wavefront.cu
-    src/denoiser.cu
-    src/multigpu.cu
 )
 
 # Include both root (original headers) and include/ (new headers)
