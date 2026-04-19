@@ -29,7 +29,7 @@ echo ""
 
 # ── Run accelerated ───────────────────────────────────────────────────────────
 echo "=> Running Accelerated (1200x800, 10 spp)..."
-./build/rt_accel --width 1200 --height 800 --spp 10 > accel.ppm 2>&1 | tee accel_stderr.log || true
+./build/rt_accel --width 1200 --height 800 --spp 10 > accel.ppm 2> accel_stderr.log || true
 echo ""
 
 # ── Summarise ─────────────────────────────────────────────────────────────────
