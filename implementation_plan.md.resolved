@@ -1,0 +1,256 @@
+# CUDA Ray Tracer — 4 Accelerations + Benchmark Script
+
+## Background
+
+**Repo:** `raytracinginoneweekendincuda` — already on `ch12_where_next_cuda` branch (the final chapter CUDA port).  
+**Current state:** Single-GPU, megakernel path tracer, linear O(N) sphere intersection, no BVH, 10 spp default.  
+**Goal:** Implement all 4 major accelerations from the IMPLEMENTATION_GUIDE and add a benchmark comparison script.
+
+### What already exists on `ch12_where_next_cuda`
+| File | Contents |
+|------|----------|
+| `main.cu` | CUDA render kernel, `create_world`, `color()` iterative loop, 8×8 thread blocks |
+| `material.h` | `lambertian`, `metal`, `dielectric` classes; has `pow()` FP64 leak in `schlick()` |
+| `sphere.h` | `sphere` class with `hit()`, uses `sqrt()` (no `sqrtf`) — FP64 leaks |
+| `vec3.h` | `vec3` class — some FP64 leaks in `make_unit_vector` and `operator/=` |
+| `camera.h` | Camera with `tan()` — FP64 potential leak |
+| `hitable.h` | `hit_record`, `hitable` base |
+| `Makefile` | nvcc build, sm_60 arch |
+
+---
+
+## The 4 Things to Implement
+
+### 1. LBVH (Linear Bounding Volume Hierarchy)
+- O(log N) ray-object intersection replaces O(N) linear scan over `hitable_list`
+- Morton code sort via Thrust, Karras 2012 parallel tree build, atomic bottom-up AABB fitting
+- **Expected speedup: 2–5× over naive CUDA baseline**
+
+### 2. Wavefront Path Tracing  
+- Eliminate warp divergence by sorting rays by material type each bounce
+- Separate shade kernels: `k_shadeLambertian`, `k_shadeDielectric`, `k_shadeMetal`, `k_shadeMiss`
+- Thrust stream compaction to remove dead rays each bounce
+- **Expected speedup: 2–4× additional over LBVH**
+
+### 3. AI Denoising (Intel OIDN)
+- Render at 32 spp instead of 500+ spp, denoise to equivalent 256 spp visual quality
+- Capture G-buffers (albedo, normal) at first hit for guided denoising
+- **Expected: effectively 8× more samples for free**
+
+### 4. Double-Precision Leak Fixes  
+- Fix `pow()` → manual expansion in `schlick()`, `sqrt()` → `sqrtf()` throughout
+- Fix `tan()` → `tanf()`, `1.0/t` → `1.0f/t` in `vec3.h`
+- Fix bare double literals `1.0`, `0.5` → `1.0f`, `0.5f` in `main.cu` and `material.h`
+- **Expected: 5–15% GPU utilization gain (FP64 at 1/32 throughput eliminated)**
+
+> [!NOTE]
+> Multi-GPU (the 5th concept in the guide) is listed as optional here — the machine may have only 1 GPU. The benchmark script will detect and use all available GPUs but the implementation will first be single-GPU clean.
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **OIDN dependency:** Intel Open Image Denoise must be installed. If not present, the denoiser step will be compiled conditionally (`#ifdef USE_OIDN`). The build will still work without it — denoising is skipped and the noisy output is written. The benchmark will note whether denoising was available.
+
+> [!WARNING]
+> **CUDA architecture:** Current Makefile targets `sm_60` (Pascal). The guide suggests `sm_86` (Ampere). The CMakeLists.txt will detect GPU arch via `CMAKE_CUDA_ARCHITECTURES=native` to auto-set the correct arch. Confirm your GPU if you see compilation issues.
+
+> [!IMPORTANT]  
+> **Build system:** The guide migrates from Makefile to CMake. We will **keep the original Makefile** for the baseline (`make cudart`) and add a **new `CMakeLists.txt`** for the accelerated build (`cmake`). This lets the benchmark script build and time both.
+
+---
+
+## Proposed Changes
+
+### New branch
+All changes go on a new branch `feature/full-acceleration` branched from `ch12_where_next_cuda`.
+
+---
+
+### Component 1: Build system
+
+#### [NEW] `CMakeLists.txt`
+- Finds CUDA, optionally finds OIDN
+- Sets `CMAKE_CUDA_ARCHITECTURES native` for portability
+- Compiles `src/main_accel.cu` + `src/lbvh.cu` + `src/wavefront.cu` + `src/denoiser.cu`
+- Links OIDN if found, otherwise defines `NO_OIDN`
+- Flags: `--use_fast_math -O3 -lineinfo`
+
+---
+
+### Component 2: Shared headers (new `include/` directory)
+
+#### [NEW] `include/aabb.h`
+- `AABB` struct with `hit()` (branchless slab test), `merge()`
+- Works `__host__ __device__`
+
+#### [NEW] `include/lbvh.h`  
+- `BVHNode` struct: `bounds`, `leftChild`, `rightChild`, `parent`, `primIdx`, `isLeaf`
+- `LBVH` struct: device pointer to nodes, sorted indices, count
+- `buildLBVH()` host function declaration
+- `traverseLBVH()` device function declaration
+
+#### [NEW] `include/ray_state.h`
+- `RayState` struct: `r`, `throughput`, `radiance`, `pendingHit`, `pixelIndex`, `depth`, `alive`
+- `GBuffers` struct: `color*`, `albedo*`, `normal*` (device pointers)
+
+#### [NEW] `include/wavefront.h`
+- `WavefrontQueues` struct with queue arrays + atomic counters
+- `wavefrontRender()` declaration
+
+#### [NEW] `include/denoiser.h`
+- `DenoiserConfig` struct
+- `denoiseOIDN()` declaration, guarded by `#ifndef NO_OIDN`
+
+#### [MODIFY] `material.h` (kept in root, also copied to `include/`)
+- Add `MaterialType` enum: `MAT_LAMBERTIAN=0`, `MAT_DIELECTRIC`, `MAT_METAL`
+- Add `type` field to `material` base class
+- Set `type` in each subclass constructor
+- Fix FP64 leaks: `pow()` → manual `base*base*base*base*base`, `sqrt()` → `sqrtf()`
+
+#### [MODIFY] `vec3.h` (fix FP64 leaks)
+- `make_unit_vector`: `1.0` → `1.0f`
+- `operator/=`: `1.0/t` → `1.0f/t`
+- `length()`, `squared_length()`: `sqrt()` → `sqrtf()` (already uses float arithmetic, just guard)
+
+#### [MODIFY] `sphere.h` (fix FP64 leaks)
+- `hit()`: `sqrt()` → `sqrtf()`
+
+---
+
+### Component 3: LBVH implementation
+
+#### [NEW] `src/lbvh.cu`
+- `expandBits()`, `morton3D()` — Morton code helpers
+- `k_computeMorton` — kernel, normalizes centroids to scene AABB
+- `k_buildInternal` — Karras 2012 parallel internal node construction
+- `k_initLeaves` — leaf node AABB from sphere radius
+- `k_fitBounds` — atomic bottom-up AABB propagation
+- `buildLBVH()` host function — orchestrates build, returns `LBVH`
+- `freeLBVH()` — free device memory
+- `traverseLBVH()` device function — iterative stack BVH traversal
+
+---
+
+### Component 4: Wavefront path tracer
+
+#### [NEW] `src/wavefront.cu`
+- `k_generateRays` — primary ray generation, initializes `RayState` per pixel
+- `k_intersect` — BVH traversal + material classification into queues, captures G-buffers on first bounce
+- `k_shadeLambertian`, `k_shadeDielectric`, `k_shadeMetal` — pure material shaders with zero cross-material branching
+- `k_shadeMiss` — sky color accumulation
+- `k_accumulate` — write per-ray radiance to output buffer
+- `wavefrontRender()` — the bounce loop: generate → intersect → shade → compact, repeated `ns` times
+
+---
+
+### Component 5: OIDN denoiser
+
+#### [NEW] `src/denoiser.cu`
+- `denoiseOIDN()` — creates OIDN CUDA device, RT filter, sets color/albedo/normal images, executes
+- Entire file guarded by `#ifndef NO_OIDN` so it compiles cleanly without OIDN
+
+---
+
+### Component 6: Accelerated main
+
+#### [NEW] `src/main_accel.cu`
+- Keeps the original `random_scene` logic but builds flat host arrays instead of linked `hitable_list`
+- Calls `buildLBVH()` → `wavefrontRender()` → `denoiseOIDN()` → PPM output
+- Accepts `--width`, `--height`, `--spp`, `--gpu` CLI flags (for benchmark runner)
+- Reports timing with `cudaEvent_t` (GPU clock, not CPU `clock()`) to stderr in machine-parseable format: `TIMING: build_ms=XX render_ms=XX denoise_ms=XX total_ms=XX`
+
+---
+
+### Component 7: Benchmark comparison script
+
+#### [NEW] `benchmark.sh`
+Full pipeline benchmark that:
+1. **Builds baseline** (`make cudart`) and runs with various `--spp` settings; parses stderr timing
+2. **Builds accelerated** (`cmake` + `make`) and runs same settings
+3. **Records metrics** via `ncu` (Nsight Compute): warp efficiency, FP32/FP64 ratio, L1 hit rate
+4. **Outputs comparison table** as `benchmark_results.csv` and prints a human-readable summary
+5. Uses small image (400×300) for fast iteration during benchmarking, and full (1200×800) for final comparison
+6. Handles single-GPU and detects multi-GPU via `nvidia-smi`
+
+---
+
+## File Tree After Implementation
+
+```
+raytracinginoneweekendincuda/
+├── Makefile                    # original — baseline build untouched
+├── CMakeLists.txt              # NEW — accelerated build
+├── benchmark.sh                # NEW — comparison script
+├── main.cu                     # original — baseline, untouched
+├── camera.h                    # original (root)
+├── vec3.h                      # MODIFIED — FP64 fixes
+├── sphere.h                    # MODIFIED — sqrtf fix
+├── material.h                  # MODIFIED — MaterialType enum + FP64 fixes
+├── hitable.h                   # original
+├── hitable_list.h              # original
+├── ray.h                       # original
+├── include/
+│   ├── aabb.h                  # NEW
+│   ├── lbvh.h                  # NEW
+│   ├── ray_state.h             # NEW
+│   ├── wavefront.h             # NEW
+│   └── denoiser.h              # NEW
+└── src/
+    ├── main_accel.cu           # NEW — accelerated entry point
+    ├── lbvh.cu                 # NEW — LBVH build + traversal
+    ├── wavefront.cu            # NEW — wavefront path tracer
+    └── denoiser.cu             # NEW — OIDN wrapper
+```
+
+---
+
+## Verification Plan
+
+### Build verification
+```bash
+# baseline still builds
+make cudart && ./cudart > /dev/null
+
+# accelerated builds
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j4
+./rt_accel > /dev/null
+```
+
+### Correctness check
+- Both renderers write PPM output; visually compare (same scene, different sample counts)
+- Image should not be all-black, all-NaN, or exhibit fireflies worse than baseline
+
+### Benchmark run
+```bash
+chmod +x benchmark.sh
+./benchmark.sh
+cat benchmark_results.csv
+```
+
+### Profiling
+```bash
+# FP64 leak check — should be 0 after fixes
+ncu --metrics smsp__sass_thread_inst_executed_op_dfma_pred_on.sum ./build/rt_accel > /dev/null
+
+# Warp efficiency — should improve post-wavefront
+ncu --metrics smsp__thread_inst_executed_per_inst_executed.ratio ./build/rt_accel > /dev/null
+```
+
+---
+
+## Expected Speedup Table (from IMPLEMENTATION_GUIDE)
+
+| Configuration | ~Time (1200×800, 32 spp) |
+|---|---|
+| Baseline CUDA (ch12, naive) | ~7 s |
+| + FP64 fixes only | ~6 s |
+| + LBVH | ~2–3 s |
+| + Wavefront | ~1–2 s |
+| + OIDN (32spp → ~256spp quality) | +0.02 s |
+| + Multi-GPU (if 2× available) | ~0.5–1 s |
+
+Benchmark script will measure actual values on your hardware.

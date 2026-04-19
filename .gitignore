@@ -2,3 +2,6 @@ cudart
 cudart.o
 out.jpg
 out.ppm
+*.md.resolved
+*Claude_export*.md
+IMPLEMENTATION_GUIDE.md
