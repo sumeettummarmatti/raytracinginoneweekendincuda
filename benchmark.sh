@@ -12,7 +12,7 @@ make cudart > /dev/null
 echo "Baseline built."
 
 echo "=> Building Accelerated..."
-mkdir -p build && cd build
+rm -rf build && mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release > /dev/null
 make -j$(nproc) > /dev/null
 cd ..

@@ -8,7 +8,7 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-__device__ vec3 random_in_unit_disk(curandState *local_rand_state) {
+static __device__ vec3 random_in_unit_disk(curandState *local_rand_state) {
     vec3 p;
     do {
         p = 2.0f*vec3(curand_uniform(local_rand_state),curand_uniform(local_rand_state),0) - vec3(1,1,0);
