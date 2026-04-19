@@ -1,4 +1,6 @@
 #include "multigpu.h"
+#include "material.h"
+#include "sphere.h"
 #include <thread>
 #include <vector>
 #include <iostream>
