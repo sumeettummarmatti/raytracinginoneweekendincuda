@@ -40,6 +40,13 @@ static __device__ vec3 reflect(const vec3& v, const vec3& n) {
      return v - 2.0f*dot(v,n)*n;
 }
 
+struct MaterialData {
+    MaterialType type;
+    vec3         albedo;
+    float        fuzz;
+    float        ref_idx;
+};
+
 enum MaterialType { MAT_LAMBERTIAN = 0, MAT_DIELECTRIC, MAT_METAL };
 
 class material  {

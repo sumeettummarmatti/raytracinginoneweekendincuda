@@ -25,6 +25,12 @@ __device__ uint32_t morton3D(float x, float y, float z) {
 
 // ── Kernels ───────────────────────────────────────────────────────────────────
 
+__global__ void k_initParents(BVHNode* nodes, int totalNodes) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= totalNodes) return;
+    nodes[i].parent = -1;
+}
+
 __global__ void k_initNodes(BVHNode* nodes, int totalNodes) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= totalNodes) return;
@@ -135,9 +141,9 @@ LBVH buildLBVH(sphere* d_spheres, int n) {
             AABB(s.center - vec3(s.radius,s.radius,s.radius),
                  s.center + vec3(s.radius,s.radius,s.radius)));
 
-    std::cerr << "[LBVH] Scene Bounds: (" << sceneBounds.mn.x() << "," << sceneBounds.mn.y() << "," << sceneBounds.mn.z() << ") - ("
-              << sceneBounds.mx.x() << "," << sceneBounds.mx.y() << "," << sceneBounds.mx.z() << ")\n";
-    std::cerr.flush();
+    std::cerr << "[LBVH] sceneBounds min=(" << sceneBounds.mn.x() << "," << sceneBounds.mn.y() << "," << sceneBounds.mn.z() 
+              << ") max=(" << sceneBounds.mx.x() << "," << sceneBounds.mx.y() << "," << sceneBounds.mx.z() << ")\n";
+    std::cerr << "[LBVH] building with n=" << n << " primitives\n";
 
     // 2. Morton codes
     thrust::device_vector<uint32_t> d_codes(n);
@@ -153,6 +159,8 @@ LBVH buildLBVH(sphere* d_spheres, int n) {
     BVHNode* d_nodes;
     cudaMalloc(&d_nodes, totalNodes * sizeof(BVHNode));
     k_initNodes<<<(totalNodes+127)/128, 128>>>(d_nodes, totalNodes);
+    k_initParents<<<(totalNodes+127)/128, 128>>>(d_nodes, totalNodes);
+    cudaDeviceSynchronize();
 
     int* d_sortedIdx;
     cudaMalloc(&d_sortedIdx, n * sizeof(int));
@@ -173,6 +181,13 @@ LBVH buildLBVH(sphere* d_spheres, int n) {
         cudaMemset(d_flags, 0, totalNodes * sizeof(int));
         k_fitBounds<<<(n+127)/128,128>>>(d_nodes, d_flags, n);
         cudaFree(d_flags);
+
+        // Step 3: Verify the root node AABB covers the scene
+        BVHNode h_root;
+        cudaMemcpy(&h_root, d_nodes, sizeof(BVHNode), cudaMemcpyDeviceToHost);
+        std::cerr << "[LBVH] ROOT VERIFICATION: bounds min=(" << h_root.bounds.mn.x() << "," << h_root.bounds.mn.y() << "," << h_root.bounds.mn.z()
+                  << ") max=(" << h_root.bounds.mx.x() << "," << h_root.bounds.mx.y() << "," << h_root.bounds.mx.z() << ")\n";
+        std::cerr << "[LBVH] root isLeaf=" << h_root.isLeaf << " left=" << h_root.leftChild << " right=" << h_root.rightChild << " parent=" << h_root.parent << "\n";
     }
 
     return LBVH{d_nodes, d_sortedIdx, n};

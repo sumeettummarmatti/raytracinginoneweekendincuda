@@ -15,34 +15,6 @@ struct GPUTile {
     vec3* d_denoised;
 };
 
-struct MaterialData {
-    MaterialType type;
-    vec3 albedo;
-    float fuzz;
-    float ref_idx;
-};
-
-__global__ void k_createMaterials(material** d_mat_ptrs, MaterialData* recipes, int numMaterials) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= numMaterials) return;
-    MaterialData& r = recipes[i];
-    if (r.type == MAT_LAMBERTIAN) d_mat_ptrs[i] = new lambertian(r.albedo);
-    else if (r.type == MAT_METAL) d_mat_ptrs[i] = new metal(r.albedo, r.fuzz);
-    else d_mat_ptrs[i] = new dielectric(r.ref_idx);
-}
-
-__global__ void k_patchSpheres(sphere* spheres, material** d_mat_ptrs, int numSpheres) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= numSpheres) return;
-    spheres[i].mat_ptr = d_mat_ptrs[i];
-}
-
-__global__ void k_deleteMaterials(material** d_mat_ptrs, int numMaterials) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= numMaterials) return;
-    delete d_mat_ptrs[i];
-}
-
 static void renderOnDevice(GPUTile& tile, RenderConfig& cfg) {
     cudaSetDevice(tile.deviceId);
 
@@ -56,26 +28,12 @@ static void renderOnDevice(GPUTile& tile, RenderConfig& cfg) {
     cudaMemcpy(d_spheres, cfg.h_spheres,
                numSpheres*sizeof(sphere), cudaMemcpyHostToDevice);
 
-    // Patch materials: we need to recreate materials on GPU to get valid vtables
-    std::vector<MaterialData> h_recipes(numSpheres);
-    for (int i = 0; i < numSpheres; i++) {
-        material* m = cfg.h_mats[i];
-        h_recipes[i].type = m->type;
-        if (m->type == MAT_LAMBERTIAN) h_recipes[i].albedo = ((lambertian*)m)->albedo;
-        else if (m->type == MAT_METAL) { 
-            h_recipes[i].albedo = ((metal*)m)->albedo; 
-            h_recipes[i].fuzz = ((metal*)m)->fuzz; 
-        }
-        else h_recipes[i].ref_idx = ((dielectric*)m)->ref_idx;
-    }
-
-    MaterialData* d_recipes; cudaMalloc(&d_recipes, numSpheres * sizeof(MaterialData));
-    cudaMemcpy(d_recipes, h_recipes.data(), numSpheres * sizeof(MaterialData), cudaMemcpyHostToDevice);
-
-    material** d_mat_ptrs; cudaMalloc(&d_mat_ptrs, numSpheres * sizeof(material*));
-    k_createMaterials<<<(numSpheres+127)/128, 128>>>(d_mat_ptrs, d_recipes, numSpheres);
-    k_patchSpheres<<<(numSpheres+127)/128, 128>>>(d_spheres, d_mat_ptrs, numSpheres);
-    cudaDeviceSynchronize();
+    // Step 1: Verify the scene actually uploads to the device
+    std::cerr << "[GPU " << tile.deviceId << "] numSpheres = " << numSpheres << "\n";
+    sphere h_check;
+    cudaMemcpy(&h_check, d_spheres, sizeof(sphere), cudaMemcpyDeviceToHost);
+    std::cerr << "[GPU " << tile.deviceId << "] sphere[0] center=(" << h_check.center.x() << "," << h_check.center.y() << "," << h_check.center.z() 
+              << ") r=" << h_check.radius << " matType=" << (int)h_check.mat.type << "\n";
 
     // allocate G-buffers
     cudaMalloc(&tile.d_color,    numPx * sizeof(vec3));
@@ -95,7 +53,7 @@ static void renderOnDevice(GPUTile& tile, RenderConfig& cfg) {
 
     wavefrontRender(W, tileH, tile.yStart, cfg.ns,
                     cfg.cam, bvh, d_spheres,
-                    nullptr, numSpheres,
+                    numSpheres,
                     gb, tile.d_color, tile.deviceId);
 
     // denoise tile on this device
@@ -112,7 +70,8 @@ static void renderOnDevice(GPUTile& tile, RenderConfig& cfg) {
 std::vector<vec3> multiGPURender(RenderConfig& cfg) {
     int numGPUs = 0;
     cudaGetDeviceCount(&numGPUs);
-    std::cerr << "Using " << numGPUs << " GPU(s)\n";
+    numGPUs = 1; // FORCED SINGLE GPU AS REQUESTED
+    std::cerr << "Using " << numGPUs << " GPU(s) (Forced Single GPU)\n";
 
     if (numGPUs == 0) return std::vector<vec3>();
 

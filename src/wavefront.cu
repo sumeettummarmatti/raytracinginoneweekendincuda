@@ -63,12 +63,10 @@ __global__ void k_intersect(RayState* states, int* activeList, int N,
     bool hit = traverseLBVH(s.r, bvh, spheres, 0.001f, 1e30f, rec);
 
     if (firstBounce && hit && gb.albedo && gb.normal) {
-        // approximate albedo from material pointer (since material data is stored dynamically in original code, we'll try to extract what we can)
-        // Original code has subclasses. Since we are doing Wavefront and we have a flat sphere array, we assume we have MaterialType now in material class.
-        MaterialType mt = rec.mat_ptr->type;
+        MaterialData mat = rec.mat;
         vec3 alb(0.0f, 0.0f, 0.0f);
-        if (mt == MAT_LAMBERTIAN) alb = ((lambertian*)rec.mat_ptr)->albedo;
-        else if (mt == MAT_METAL) alb = ((metal*)rec.mat_ptr)->albedo;
+        if (mat.type == MAT_LAMBERTIAN) alb = mat.albedo;
+        else if (mat.type == MAT_METAL) alb = mat.albedo;
         else alb = vec3(1.0f, 1.0f, 1.0f); // dielectric
         
         gb.albedo[s.pixelIndex] = alb;
@@ -83,7 +81,7 @@ __global__ void k_intersect(RayState* states, int* activeList, int N,
 
     s.pendingHit = rec;
 
-    MaterialType mt = rec.mat_ptr->type;
+    MaterialType mt = rec.mat.type;
     if (mt == MAT_LAMBERTIAN) {
         int slot = atomicAdd(&Q.d_counts[0], 1);
         Q.lambertian[slot] = rayIdx;
@@ -106,11 +104,11 @@ __global__ void k_shadeLambertian(RayState* states, int* queue,
     RayState& s = states[rayIdx];
     hit_record& rec = s.pendingHit;
 
-    lambertian* mat = (lambertian*)rec.mat_ptr;
+    MaterialData mat = rec.mat;
     vec3 target = rec.p + rec.normal
                 + randomInUnitSphere(&rng[rayIdx]);
     s.r          = ray(rec.p, target - rec.p);
-    s.throughput *= mat->albedo;
+    s.throughput *= mat.albedo;
     s.depth++;
     if (s.depth >= MAX_DEPTH || s.throughput.squared_length() < 1e-6f)
         s.alive = false;
@@ -124,10 +122,10 @@ __global__ void k_shadeDielectric(RayState* states, int* queue,
     RayState& s = states[rayIdx];
     hit_record& rec = s.pendingHit;
 
-    dielectric* mat = (dielectric*)rec.mat_ptr;
+    MaterialData mat = rec.mat;
     vec3 outwardNormal;
     float ni_over_nt, cosine;
-    float refIdx = mat->ref_idx;
+    float refIdx = mat.ref_idx;
 
     if (dot(s.r.direction(), rec.normal) > 0.0f) {
         outwardNormal = -rec.normal;
@@ -173,10 +171,10 @@ __global__ void k_shadeMetal(RayState* states, int* queue,
     RayState& s = states[rayIdx];
     hit_record& rec = s.pendingHit;
     
-    metal* mat = (metal*)rec.mat_ptr;
+    MaterialData mat = rec.mat;
     vec3 reflected = reflect(unit_vector(s.r.direction()), rec.normal);
     vec3 scattered = reflected
-                   + mat->fuzz * randomInUnitSphere(&rng[rayIdx]);
+                   + mat.fuzz * randomInUnitSphere(&rng[rayIdx]);
 
     if (dot(scattered, rec.normal) <= 0.0f) { s.alive = false; return; }
     s.r          = ray(rec.p, scattered);
@@ -224,7 +222,7 @@ struct normalize_functor {
 
 void wavefrontRender(int width, int height, int yOffset, int ns,
                      camera& cam, LBVH& bvh, sphere* d_spheres,
-                     material** d_materials, int numSpheres,
+                     int numSpheres,
                      GBuffers& gb, vec3* d_output, int gpuId) {
     int numRays = width * height;
     float aspect = 1.5f; 

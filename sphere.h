@@ -6,11 +6,11 @@
 class sphere: public hitable  {
     public:
         __host__ __device__ sphere() {}
-        __host__ __device__ sphere(vec3 cen, float r, material *m) : center(cen), radius(r), mat_ptr(m)  {};
+        __host__ __device__ sphere(vec3 cen, float r, MaterialData m) : center(cen), radius(r), mat(m)  {};
         __device__ virtual bool hit(const ray& r, float tmin, float tmax, hit_record& rec) const;
         vec3 center;
         float radius;
-        material *mat_ptr;
+        MaterialData mat;
 };
 
 // __device__ inline gives weak linkage — safe to include in multiple .cu files
@@ -27,7 +27,7 @@ __device__ inline bool sphere::hit(const ray& r, float t_min, float t_max, hit_r
             rec.t = temp;
             rec.p = r.point_at_parameter(rec.t);
             rec.normal = (rec.p - center) / radius;
-            rec.mat_ptr = mat_ptr;
+            rec.mat = mat;
             return true;
         }
         temp = (-b + sqrtf(discriminant)) / a;
@@ -35,7 +35,7 @@ __device__ inline bool sphere::hit(const ray& r, float t_min, float t_max, hit_r
             rec.t = temp;
             rec.p = r.point_at_parameter(rec.t);
             rec.normal = (rec.p - center) / radius;
-            rec.mat_ptr = mat_ptr;
+            rec.mat = mat;
             return true;
         }
     }

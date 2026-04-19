@@ -10,7 +10,6 @@ struct RenderConfig {
     int width, height, ns;
     camera cam;
     sphere* h_spheres;   // host-side sphere array
-    material** h_mats;   // host-side material array
     int numSpheres;
 };
 
