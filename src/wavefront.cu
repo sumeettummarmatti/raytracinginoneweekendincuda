@@ -277,11 +277,18 @@ void wavefrontRender(int width, int height, int yOffset, int ns,
     // normalize by sample count
     int totalPx = width * height;
     float inv_ns = 1.0f / float(ns);
-    auto normalize = [inv_ns] __device__ (vec3 v) { return vec3(v.x()*inv_ns, v.y()*inv_ns, v.z()*inv_ns); };
+    struct normalize_functor {
+        float inv_ns;
+        normalize_functor(float inv) : inv_ns(inv) {}
+        __device__ vec3 operator()(const vec3& v) const {
+            return vec3(v.x()*inv_ns, v.y()*inv_ns, v.z()*inv_ns);
+        }
+    };
+
     thrust::transform(thrust::device_pointer_cast(d_output),
                       thrust::device_pointer_cast(d_output + totalPx),
                       thrust::device_pointer_cast(d_output),
-                      normalize);
+                      normalize_functor(inv_ns));
 
     cudaFree(d_states);  cudaFree(d_rng);
     cudaFree(Q.lambertian); cudaFree(Q.dielectric);
