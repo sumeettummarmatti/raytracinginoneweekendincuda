@@ -61,7 +61,7 @@ static void renderOnDevice(GPUTile& tile, RenderConfig& cfg) {
 std::vector<vec3> multiGPURender(RenderConfig& cfg) {
     int numGPUs = 0;
     cudaGetDeviceCount(&numGPUs);
-    std::cout << "Using " << numGPUs << " GPU(s)\n";
+    std::cerr << "Using " << numGPUs << " GPU(s)\n";
 
     if (numGPUs == 0) return std::vector<vec3>();
 

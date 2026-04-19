@@ -26,7 +26,8 @@ echo "=> Running Baseline Config (1200x800, 10 spp)..."
 { time ./cudart > baseline.ppm ; } 2>&1 | tee baseline_time.txt || true
 
 echo "=> Running Accelerated Config (1200x800, 10 spp)..."
-{ time ./build/rt_accel --width 1200 --height 800 --spp 10 > accel.ppm ; } 2>&1 | tee accel_time.txt || true
+./build/rt_accel --width 1200 --height 800 --spp 10 > accel.ppm 2> accel_debug.log
+cat accel_debug.log
 
 echo ""
 echo "=> Running Baseline Profiling (NCU)..."
