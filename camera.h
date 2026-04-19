@@ -21,7 +21,7 @@ public:
     __device__ camera(vec3 lookfrom, vec3 lookat, vec3 vup, float vfov, float aspect, float aperture, float focus_dist) { // vfov is top to bottom in degrees
         lens_radius = aperture / 2.0f;
         float theta = vfov*((float)M_PI)/180.0f;
-        float half_height = tan(theta/2.0f);
+        float half_height = tanf(theta/2.0f);
         float half_width = aspect * half_height;
         origin = lookfrom;
         w = unit_vector(lookfrom - lookat);
