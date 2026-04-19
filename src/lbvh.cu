@@ -108,19 +108,31 @@ __global__ void k_initLeaves(sphere* spheres, int* sortedIdx,
     nodes[leafNode].bounds   = AABB(s.center - r, s.center + r);
     nodes[leafNode].isLeaf   = true;
     nodes[leafNode].primIdx  = sortedIdx[i];
-    nodes[leafNode].parent   = -1;
+    // parent will be set by k_buildInternal
 }
 
 __global__ void k_fitBounds(BVHNode* nodes, int* flags, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    int cur = (n - 1) + i;
+    int cur = (n - 1) + i; // Start from leaf i
+
+    // We proceed up the tree towards the root
     int par = nodes[cur].parent;
     while (par != -1) {
-        if (atomicAdd(&flags[par], 1) == 0) return;
+        // Write current node's bounds and ensure visibility
+        // wait, we only write if we are the second child. 
+        // Correct Karras pattern:
+        // 1. Thread reaching parent does atomicAdd
+        // 2. If it's the second child, it merges CHILDREN's bounds into PARENT
+        // 3. Thread then moves to GRANDPARENT and repeats.
         
+        int old = atomicAdd(&flags[par], 1);
+        if (old == 0) return; // First child to reach par returns
+        
+        // Second child reaches par: children's bounds are guaranteed to be ready
         nodes[par].bounds = merge(nodes[nodes[par].leftChild].bounds,
                                    nodes[nodes[par].rightChild].bounds);
+        
         __threadfence();
         par = nodes[par].parent;
     }
@@ -129,7 +141,7 @@ __global__ void k_fitBounds(BVHNode* nodes, int* flags, int n) {
 // ── Host build ────────────────────────────────────────────────────────────────
 
 LBVH buildLBVH(sphere* d_spheres, int n) {
-    // 1. compute scene AABB on host (small n, fine to do serially)
+    // 1. compute scene AABB on host
     std::vector<sphere> h_spheres(n);
     cudaMemcpy(h_spheres.data(), d_spheres, n * sizeof(sphere),
                cudaMemcpyDeviceToHost);
@@ -159,7 +171,6 @@ LBVH buildLBVH(sphere* d_spheres, int n) {
     BVHNode* d_nodes;
     cudaMalloc(&d_nodes, totalNodes * sizeof(BVHNode));
     k_initNodes<<<(totalNodes+127)/128, 128>>>(d_nodes, totalNodes);
-    k_initParents<<<(totalNodes+127)/128, 128>>>(d_nodes, totalNodes);
     cudaDeviceSynchronize();
 
     int* d_sortedIdx;
@@ -169,25 +180,34 @@ LBVH buildLBVH(sphere* d_spheres, int n) {
 
     // 5. init leaves
     k_initLeaves<<<(n+127)/128,128>>>(d_spheres, d_sortedIdx, d_nodes, n);
+    cudaDeviceSynchronize();
 
     // 6. build internal nodes
     if (n > 1) {
         k_buildInternal<<<(n+127)/128,128>>>(
             d_codes.data().get(), d_nodes, n);
+        
+        // CRITICAL SYNC: Ensure all parent pointers are set before fitting bounds
+        cudaDeviceSynchronize();
 
         // 7. fit bounds bottom-up
         int* d_flags;
         cudaMalloc(&d_flags, totalNodes * sizeof(int));
         cudaMemset(d_flags, 0, totalNodes * sizeof(int));
+        
         k_fitBounds<<<(n+127)/128,128>>>(d_nodes, d_flags, n);
-        cudaFree(d_flags);
+        
+        // CRITICAL SYNC: Ensure bounds fitting is done before verification
+        cudaDeviceSynchronize();
 
-        // Step 3: Verify the root node AABB covers the scene
+        // Verification
         BVHNode h_root;
         cudaMemcpy(&h_root, d_nodes, sizeof(BVHNode), cudaMemcpyDeviceToHost);
         std::cerr << "[LBVH] ROOT VERIFICATION: bounds min=(" << h_root.bounds.mn.x() << "," << h_root.bounds.mn.y() << "," << h_root.bounds.mn.z()
                   << ") max=(" << h_root.bounds.mx.x() << "," << h_root.bounds.mx.y() << "," << h_root.bounds.mx.z() << ")\n";
         std::cerr << "[LBVH] root isLeaf=" << h_root.isLeaf << " left=" << h_root.leftChild << " right=" << h_root.rightChild << " parent=" << h_root.parent << "\n";
+        
+        cudaFree(d_flags);
     }
 
     return LBVH{d_nodes, d_sortedIdx, n};
