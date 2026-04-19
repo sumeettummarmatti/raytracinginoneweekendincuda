@@ -30,7 +30,7 @@ __device__ inline bool traverseLBVH(const ray& r, const LBVH& bvh,
                                      hit_record& rec) {
     if (bvh.numPrims == 0) return false;
 
-    int stack[64];
+    int stack[128];
     int top = 0;
     stack[top++] = 0;
     bool hit = false;
@@ -48,6 +48,8 @@ __device__ inline bool traverseLBVH(const ray& r, const LBVH& bvh,
                 hit  = true;
             }
         } else {
+            // Prevent stack overflow (depth worst-case could be high with skewed geometry)
+            if (top >= 126) continue;
             stack[top++] = node.leftChild;
             stack[top++] = node.rightChild;
         }
