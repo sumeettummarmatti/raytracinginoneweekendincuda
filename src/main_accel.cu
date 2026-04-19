@@ -4,6 +4,9 @@
 #include <chrono>
 #include <string>
 #include <cstdlib>
+#include <ctime>
+#include <cmath>
+#include <algorithm>
 #include "vec3.h"
 #include "ray.h"
 #include "camera.h"
