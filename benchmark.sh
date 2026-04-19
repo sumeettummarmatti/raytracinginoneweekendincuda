@@ -21,11 +21,12 @@ echo "Accelerated built."
 echo ""
 echo "=> Running Baseline Config (1200x800, 10 spp)..."
 # Baseline is hardcoded to 1200x800, 10 spp.
-# Run baseline
-{ time ./cudart > baseline.ppm ; } 2> baseline_time.txt
+# Run baseline and capture both stdout and stderr (time outputs to stderr)
+# We append `|| true` so the script doesn't abort from `set -e` if the baseline crashes (error 99).
+{ time ./cudart > baseline.ppm ; } 2>&1 | tee baseline_time.txt || true
 
 echo "=> Running Accelerated Config (1200x800, 10 spp)..."
-{ time ./build/rt_accel --width 1200 --height 800 --spp 10 > accel.ppm ; } 2> accel_time.txt
+{ time ./build/rt_accel --width 1200 --height 800 --spp 10 > accel.ppm ; } 2>&1 | tee accel_time.txt || true
 
 echo ""
 echo "=> Running Baseline Profiling (NCU)..."
