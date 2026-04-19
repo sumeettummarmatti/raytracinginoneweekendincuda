@@ -14,6 +14,7 @@ __device__ uint32_t expandBits(uint32_t v) {
 }
 
 __device__ uint32_t morton3D(float x, float y, float z) {
+    if (isnan(x) || isnan(y) || isnan(z)) return 0;
     x = fminf(fmaxf(x * 1024.0f, 0.0f), 1023.0f);
     y = fminf(fmaxf(y * 1024.0f, 0.0f), 1023.0f);
     z = fminf(fmaxf(z * 1024.0f, 0.0f), 1023.0f);
@@ -133,6 +134,10 @@ LBVH buildLBVH(sphere* d_spheres, int n) {
         sceneBounds = merge(sceneBounds,
             AABB(s.center - vec3(s.radius,s.radius,s.radius),
                  s.center + vec3(s.radius,s.radius,s.radius)));
+
+    std::cerr << "[LBVH] Scene Bounds: (" << sceneBounds.mn.x() << "," << sceneBounds.mn.y() << "," << sceneBounds.mn.z() << ") - ("
+              << sceneBounds.mx.x() << "," << sceneBounds.mx.y() << "," << sceneBounds.mx.z() << ")\n";
+    std::cerr.flush();
 
     // 2. Morton codes
     thrust::device_vector<uint32_t> d_codes(n);

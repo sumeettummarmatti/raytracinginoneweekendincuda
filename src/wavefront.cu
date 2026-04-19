@@ -268,7 +268,10 @@ void wavefrontRender(int width, int height, int yOffset, int ns,
             int totalHits = counts[0] + counts[1] + counts[2];
             if (firstBounce) {
                 std::cerr << "[GPU " << gpuId << "] Bounce 1: Hits=" << totalHits << ", Misses=" << counts[3] << "\n";
+                std::cerr.flush();
             }
+            
+            firstBounce = false;
 
             if (counts[0]) k_shadeLambertian<<<(counts[0]+127)/128,128>>>(d_states, Q.lambertian, counts[0], d_rng);
             if (counts[1]) k_shadeDielectric<<<(counts[1]+127)/128,128>>>(d_states, Q.dielectric, counts[1], d_rng);
