@@ -85,9 +85,10 @@ std::vector<vec3> multiGPURender(RenderConfig& cfg)
         std::cerr << "[multiGPU] no CUDA devices found\n";
         return {};
     }
-    // Kaggle T4 single-GPU is fine; uncomment to force single:
-    // numGPUs = 1;
+    // Force single GPU to avoid multi-threaded CUDA context racing:
+    numGPUs = 1;
     std::cerr << "Using " << numGPUs << " GPU(s)\n";
+    std::cerr.flush();
 
     // ── tile split ────────────────────────────────────────────────────────────
     std::vector<GPUTile> tiles(numGPUs);
@@ -123,10 +124,13 @@ std::vector<vec3> multiGPURender(RenderConfig& cfg)
         int tileH  = tile.yEnd - tile.yStart;
         int offset = tile.yStart * cfg.width;
 
+        // d_denoised was populated by the OIDN stub (memcpy of d_color)
         cudaMemcpy(h_output.data() + offset,
                    tile.d_denoised,
                    cfg.width * tileH * sizeof(vec3),
                    cudaMemcpyDeviceToHost);
+        std::cerr << "[GPU " << tile.deviceId << "] tile gathered " << tileH << " rows\n";
+        std::cerr.flush();
 
         cudaFree(tile.d_color);
         cudaFree(tile.d_albedo);
