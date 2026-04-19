@@ -245,6 +245,7 @@ void wavefrontRender(int width, int height, int yOffset, int ns,
         }
 
         k_generateRays<<<grd2d, blk2d>>>(d_states, d_rng, cam, width, height, fullHeight, yOffset);
+        cudaDeviceSynchronize();
 
         // Reset active indices
         thrust::sequence(active.begin(), active.end());
@@ -257,6 +258,7 @@ void wavefrontRender(int width, int height, int yOffset, int ns,
             k_intersect<<<(N+127)/128, 128>>>(
                 d_states, active.data().get(), N,
                 bvh, d_spheres, Q, gb, firstBounce);
+            cudaDeviceSynchronize();
             
             firstBounce = false;
 
@@ -267,12 +269,14 @@ void wavefrontRender(int width, int height, int yOffset, int ns,
             if (counts[1]) k_shadeDielectric<<<(counts[1]+127)/128,128>>>(d_states, Q.dielectric, counts[1], d_rng);
             if (counts[2]) k_shadeMetal<<<(counts[2]+127)/128,128>>>(d_states, Q.metal, counts[2], d_rng);
             if (counts[3]) k_shadeMiss<<<(counts[3]+127)/128,128>>>(d_states, Q.miss, counts[3]);
+            cudaDeviceSynchronize();
 
             // compact: remove dead rays
             auto newEnd = thrust::remove_if(active.begin(), active.begin() + N, is_alive(d_states));
             N = (int)(newEnd - active.begin());
         }
         k_accumulate<<<(numRays+127)/128,128>>>(d_states, d_output, numRays);
+        cudaDeviceSynchronize();
     }
     std::cerr << "[GPU " << gpuId << "] Finished " << ns << " samples.             \n";
 
