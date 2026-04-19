@@ -24,6 +24,14 @@ __device__ uint32_t morton3D(float x, float y, float z) {
 
 // ── Kernels ───────────────────────────────────────────────────────────────────
 
+__global__ void k_initNodes(BVHNode* nodes, int totalNodes) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= totalNodes) return;
+    nodes[i].parent = -1;
+    nodes[i].leftChild = -1;
+    nodes[i].rightChild = -1;
+}
+
 __global__ void k_computeMorton(sphere* spheres, uint32_t* codes,
                                  int* indices, AABB sceneBounds, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -78,8 +86,9 @@ __global__ void k_buildInternal(uint32_t* codes, BVHNode* nodes,
     nodes[i].rightChild = rightIdx;
     nodes[i].isLeaf     = false;
 
-    if (leftIdx  >= n - 1) nodes[leftIdx].parent  = i;
-    if (rightIdx >= n - 1) nodes[rightIdx].parent = i;
+    // Set parents for BOTH internal and leaf children
+    nodes[leftIdx].parent  = i;
+    nodes[rightIdx].parent = i;
 }
 
 __global__ void k_initLeaves(sphere* spheres, int* sortedIdx,
@@ -137,7 +146,7 @@ LBVH buildLBVH(sphere* d_spheres, int n) {
     int totalNodes = 2 * n - 1;
     BVHNode* d_nodes;
     cudaMalloc(&d_nodes, totalNodes * sizeof(BVHNode));
-    cudaMemset(d_nodes, 0, totalNodes * sizeof(BVHNode));
+    k_initNodes<<<(totalNodes+127)/128, 128>>>(d_nodes, totalNodes);
 
     int* d_sortedIdx;
     cudaMalloc(&d_sortedIdx, n * sizeof(int));
