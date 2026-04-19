@@ -17,11 +17,14 @@ echo "=> Building Accelerated (CMake)..."
 rm -rf build && mkdir -p build
 cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release 2>&1 | grep -E "OIDN|arch|Error" || true
-if make -j$(nproc) 2>&1 | tail -n 10; then
+make -j$(nproc) > build_log.txt 2>&1
+if [ $? -eq 0 ]; then
+    tail -n 10 build_log.txt
     cd ..
     echo "Accelerated built successfully."
 else
-    echo "Accelerated build FAILED. Check build_errors.log"
+    cat build_log.txt
+    echo "Accelerated build FAILED."
     exit 1
 fi
 echo ""
