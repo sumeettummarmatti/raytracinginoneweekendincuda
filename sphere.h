@@ -6,10 +6,16 @@
 class sphere: public hitable  {
     public:
         __host__ __device__ sphere() {}
-        __host__ __device__ sphere(vec3 cen, float r, MaterialData m) : center(cen), radius(r), mat(m)  {};
+        __host__ __device__ sphere(vec3 cen, float r, MaterialData m) : center(cen), radius(r), mat(m), mat_ptr(nullptr) {}
+        __host__ __device__ sphere(vec3 cen, float r, material* m) : center(cen), radius(r), mat_ptr(m) {
+            // For baseline compatibility, we don't necessarily need 'mat' populated
+            // but we can initialize it to a default/invalid state.
+            mat.type = (m ? m->type : MAT_LAMBERTIAN); 
+        }
         __device__ virtual bool hit(const ray& r, float tmin, float tmax, hit_record& rec) const;
         vec3 center;
         float radius;
+        material* mat_ptr;
         MaterialData mat;
 };
 
@@ -28,6 +34,7 @@ __device__ inline bool sphere::hit(const ray& r, float t_min, float t_max, hit_r
             rec.p = r.point_at_parameter(rec.t);
             rec.normal = (rec.p - center) / radius;
             rec.mat = mat;
+            rec.mat_ptr = mat_ptr;
             return true;
         }
         temp = (-b + sqrtf(discriminant)) / a;
@@ -36,6 +43,7 @@ __device__ inline bool sphere::hit(const ray& r, float t_min, float t_max, hit_r
             rec.p = r.point_at_parameter(rec.t);
             rec.normal = (rec.p - center) / radius;
             rec.mat = mat;
+            rec.mat_ptr = mat_ptr;
             return true;
         }
     }
