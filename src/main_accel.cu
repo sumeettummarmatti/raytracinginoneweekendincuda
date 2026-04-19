@@ -1,5 +1,7 @@
 #include <iostream>
 #include <vector>
+#include <chrono>
+#include <string>
 #include "vec3.h"
 #include "camera.h"
 #include "sphere.h"
@@ -43,7 +45,7 @@ void buildRandomScene(std::vector<sphere>& h_spheres, std::vector<material*>& h_
 int main(int argc, char** argv) {
     int W  = 1200;
     int H  = 800;
-    int NS = 32;
+    int NS = 10;
 
     for (int i=1; i < argc; i++) {
         if (std::string(argv[i]) == "--width" && i+1 < argc) W = std::stoi(argv[++i]);
@@ -52,11 +54,6 @@ int main(int argc, char** argv) {
     }
 
     std::cerr << "Accelerated render config: " << W << "x" << H << ", " << NS << " spp\n";
-
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    cudaEventRecord(start);
 
     // build scene
     std::vector<sphere>   h_spheres;
@@ -78,13 +75,13 @@ int main(int argc, char** argv) {
     cfg.h_mats     = h_mats.data();
     cfg.numSpheres = (int)h_spheres.size();
 
+    auto start_time = std::chrono::high_resolution_clock::now();
+
     auto framebuffer = multiGPURender(cfg);
     
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-    float ms;
-    cudaEventElapsedTime(&ms, start, stop);
-    std::cerr << "TIMING: total_ms=" << ms << "\n";
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<float, std::milli> duration = end_time - start_time;
+    std::cerr << "TIMING: total_wall_ms=" << duration.count() << "\n";
 
     // write PPM
     std::cout << "P3\n" << W << " " << H << "\n255\n";
