@@ -36,6 +36,7 @@ static void renderOnDevice(GPUTile& tile, RenderConfig& cfg) {
     cudaMemset(tile.d_normal, 0, numPx * sizeof(vec3));
 
     // build LBVH on this device
+    std::cerr << "[GPU " << tile.deviceId << "] Building LBVH for " << numSpheres << " spheres...\n";
     LBVH bvh = buildLBVH(d_spheres, numSpheres);
 
     // tile camera: offset camera ray generation by tile.yStart

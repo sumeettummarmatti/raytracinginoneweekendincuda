@@ -239,8 +239,8 @@ void wavefrontRender(int width, int height, int yOffset, int ns,
 
     // sample accumulation loop
     for (int sample = 0; sample < ns; sample++) {
-        if (sample % 2 == 0 || sample == ns - 1) {
-            std::cerr << "[GPU " << gpuId << "] Rendering Sample " << sample + 1 << "/" << ns << "...\r";
+        if (sample % 1 == 0) { // Report every sample for better visibility
+            std::cerr << "[GPU " << gpuId << "] Rendering Sample " << sample + 1 << "/" << ns << "\n";
             std::cerr.flush();
         }
 
