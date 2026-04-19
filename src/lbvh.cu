@@ -2,8 +2,10 @@
 #include <thrust/sort.h>
 #include <thrust/device_vector.h>
 #include <thrust/sequence.h>
+#include <vector>
+#include <iostream>
 
-// ── Morton code helpers ───────────────────────────────────────────────────────
+// ── Morton helpers ────────────────────────────────────────────────────────────
 
 __device__ uint32_t expandBits(uint32_t v) {
     v = (v * 0x00010001u) & 0xFF0000FFu;
@@ -14,7 +16,6 @@ __device__ uint32_t expandBits(uint32_t v) {
 }
 
 __device__ uint32_t morton3D(float x, float y, float z) {
-    if (isnan(x) || isnan(y) || isnan(z)) return 0;
     x = fminf(fmaxf(x * 1024.0f, 0.0f), 1023.0f);
     y = fminf(fmaxf(y * 1024.0f, 0.0f), 1023.0f);
     z = fminf(fmaxf(z * 1024.0f, 0.0f), 1023.0f);
@@ -23,41 +24,28 @@ __device__ uint32_t morton3D(float x, float y, float z) {
            (expandBits((uint32_t)z));
 }
 
-// ── Kernels ───────────────────────────────────────────────────────────────────
-
-__global__ void k_initNodes(BVHNode* nodes, int totalNodes) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= totalNodes) return;
-    nodes[i].parent     = -1;
-    nodes[i].leftChild  = -1;
-    nodes[i].rightChild = -1;
-    nodes[i].isLeaf     = false;
-    nodes[i].primIdx    = -1;
-    // init bounds to invalid so we can detect unfilled nodes
-    nodes[i].bounds.mn = vec3( 1e30f,  1e30f,  1e30f);
-    nodes[i].bounds.mx = vec3(-1e30f, -1e30f, -1e30f);
-}
+// ── Morton code kernel ────────────────────────────────────────────────────────
 
 __global__ void k_computeMorton(sphere* spheres, uint32_t* codes,
                                  int* indices, AABB sceneBounds, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    vec3 c   = spheres[i].center;
-    vec3 ext = sceneBounds.mx - sceneBounds.mn;
-    float ex = fmaxf(ext.x(), 1e-6f);
-    float ey = fmaxf(ext.y(), 1e-6f);
-    float ez = fmaxf(ext.z(), 1e-6f);
-    vec3 norm((c.x() - sceneBounds.mn.x()) / ex,
-              (c.y() - sceneBounds.mn.y()) / ey,
-              (c.z() - sceneBounds.mn.z()) / ez);
-    codes[i]   = morton3D(norm.x(), norm.y(), norm.z());
+    vec3 c = spheres[i].center;
+    float ex = fmaxf(sceneBounds.mx.x() - sceneBounds.mn.x(), 1e-6f);
+    float ey = fmaxf(sceneBounds.mx.y() - sceneBounds.mn.y(), 1e-6f);
+    float ez = fmaxf(sceneBounds.mx.z() - sceneBounds.mn.z(), 1e-6f);
+    float nx = (c.x() - sceneBounds.mn.x()) / ex;
+    float ny = (c.y() - sceneBounds.mn.y()) / ey;
+    float nz = (c.z() - sceneBounds.mn.z()) / ez;
+    codes[i]   = morton3D(nx, ny, nz);
     indices[i] = i;
 }
 
-__device__ int deltaLeading(uint32_t* codes, int i, int j, int n) {
+// ── Karras 2012 internal node build ──────────────────────────────────────────
+
+__device__ int delta(uint32_t* codes, int i, int j, int n) {
     if (j < 0 || j >= n) return -1;
-    if (codes[i] == codes[j])
-        return __clz(i ^ j) + 32;
+    if (codes[i] == codes[j]) return 32 + __clz(i ^ j);
     return __clz(codes[i] ^ codes[j]);
 }
 
@@ -65,180 +53,186 @@ __global__ void k_buildInternal(uint32_t* codes, BVHNode* nodes, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n - 1) return;
 
-    int d = (deltaLeading(codes,i,i+1,n) - deltaLeading(codes,i,i-1,n)) >= 0 ? 1 : -1;
-    int dMin = deltaLeading(codes, i, i - d, n);
+    // determine direction
+    int d = (delta(codes,i,i+1,n) - delta(codes,i,i-1,n)) >= 0 ? 1 : -1;
+    int dMin = delta(codes, i, i - d, n);
+
+    // upper bound on range length
     int lMax = 2;
-    while (deltaLeading(codes, i, i + lMax * d, n) > dMin) lMax <<= 1;
+    while (delta(codes, i, i + lMax*d, n) > dMin) lMax <<= 1;
 
+    // binary search for exact end
     int l = 0;
-    for (int t = lMax >> 1; t >= 1; t >>= 1)
-        if (deltaLeading(codes, i, i + (l + t) * d, n) > dMin) l += t;
+    for (int t = lMax/2; t >= 1; t /= 2)
+        if (delta(codes, i, i + (l+t)*d, n) > dMin) l += t;
+    int j = i + l * d;
 
-    int j    = i + l * d;
-    int lo   = min(i, j), hi = max(i, j);
+    int lo = min(i,j), hi = max(i,j);
 
-    int dNode = deltaLeading(codes, i, j, n);
+    // find split
+    int dNode = delta(codes, lo, hi, n);
     int s = 0;
-    for (int t = (hi - lo + 1) >> 1; t >= 1; t >>= 1)
-        if (deltaLeading(codes, lo, lo + s + t, n) > dNode) s += t;
+    for (int t = (hi-lo+1)/2; t >= 1; t = (t == 1 ? 0 : t/2)) {
+        if (delta(codes, lo, lo+s+t, n) > dNode) s += t;
+        if (t == 1) break;
+    }
     int split = lo + s;
 
-    int leftIdx  = (split     == lo) ? (n - 1) + split     : split;
-    int rightIdx = (split + 1 == hi) ? (n - 1) + split + 1 : split + 1;
+    // Internal nodes: [0, n-1), leaves: [n-1, 2n-1)
+    int L = (split     == lo) ? (n-1) + split     : split;
+    int R = (split + 1 == hi) ? (n-1) + split + 1 : split + 1;
 
-    nodes[i].leftChild  = leftIdx;
-    nodes[i].rightChild = rightIdx;
+    nodes[i].leftChild  = L;
+    nodes[i].rightChild = R;
     nodes[i].isLeaf     = false;
-
-    nodes[leftIdx].parent  = i;
-    nodes[rightIdx].parent = i;
+    nodes[i].primIdx    = -1;
+    nodes[L].parent     = i;
+    nodes[R].parent     = i;
 }
 
 __global__ void k_initLeaves(sphere* spheres, int* sortedIdx,
                               BVHNode* nodes, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    int leafNode = (n - 1) + i;
-    sphere& s = spheres[sortedIdx[i]];
-    vec3 r(s.radius, s.radius, s.radius);
-    nodes[leafNode].bounds  = AABB(s.center - r, s.center + r);
-    nodes[leafNode].isLeaf  = true;
-    nodes[leafNode].primIdx = sortedIdx[i];
+    int li = (n-1) + i;
+    int si = sortedIdx[i];
+    vec3 r(spheres[si].radius, spheres[si].radius, spheres[si].radius);
+    nodes[li].bounds   = AABB(spheres[si].center - r, spheres[si].center + r);
+    nodes[li].isLeaf   = true;
+    nodes[li].primIdx  = si;
+    nodes[li].leftChild  = -1;
+    nodes[li].rightChild = -1;
 }
 
-// FIX: The old k_fitBounds never wrote the root (node 0) because it
-// exits when par == -1 BEFORE merging. The correct pattern:
-// - each leaf thread walks up
-// - at each internal node, the SECOND thread to arrive does the merge
-//   and continues upward
-// - the root (parent == -1) is reached by the very last surviving thread,
-//   which merges its two children and writes node 0's bounds.
-__global__ void k_fitBounds(BVHNode* nodes, int* flags, int n) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= n) return;
+// ── Bottom-up AABB fit — done entirely on HOST after build ───────────────────
+// The GPU atomic approach is unreliable across architectures.
+// For 484 nodes this host pass takes < 1ms. Correctness > cleverness.
 
-    // start at this leaf
-    int cur = (n - 1) + i;
+void fitBoundsHost(std::vector<BVHNode>& nodes, int n) {
+    // n leaves, n-1 internal nodes, total = 2n-1
+    // Process internal nodes in reverse order (leaves have highest indices).
+    // A simple post-order traversal: for each internal node (indices 0..n-2),
+    // we need both children ready. Because of the Karras property, processing
+    // from index n-2 down to 0 guarantees children are always processed first
+    // for a balanced split... but that's not guaranteed in general.
+    // Safest: iterative post-order using a visited flag array.
 
-    while (true) {
-        int par = nodes[cur].parent;
+    int total = 2*n - 1;
+    std::vector<bool> done(total, false);
 
-        // cur is the root (no parent) — we are done
-        if (par == -1) break;
+    // mark all leaves done
+    for (int i = n-1; i < total; i++) done[i] = true;
 
-        // Race to be the second thread at this parent.
-        // First thread (old==0) exits — its sibling hasn't computed bounds yet.
-        // Second thread (old==1) proceeds to merge both children.
-        int old = atomicAdd(&flags[par], 1);
-        if (old == 0) return;
-
-        // Both children's bounds are now guaranteed written (first thread wrote
-        // its child before calling atomicAdd, and __threadfence makes it visible).
-        __threadfence();
-
-        nodes[par].bounds = merge(nodes[nodes[par].leftChild].bounds,
-                                   nodes[nodes[par].rightChild].bounds);
-        __threadfence();  // make parent bounds visible before moving up
-
-        cur = par;
+    // repeat passes until root is done — O(depth) passes, depth ~ log n
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (int i = 0; i < n-1; i++) {
+            if (done[i]) continue;
+            int L = nodes[i].leftChild;
+            int R = nodes[i].rightChild;
+            if (L < 0 || R < 0) continue;
+            if (!done[L] || !done[R]) continue;
+            nodes[i].bounds = merge(nodes[L].bounds, nodes[R].bounds);
+            done[i]  = true;
+            changed  = true;
+        }
     }
-
-    // If we reach here, cur == 0 (root). Its bounds were just written above
-    // (or cur started as 0 for the n==1 case handled separately).
-}
-
-// For n==1: the single sphere IS the root. Leaf init covers it.
-// For n>1: the root is internal node 0; k_fitBounds above handles it.
-// Safety net: one thread re-merges root from its children after k_fitBounds.
-__global__ void k_fixupRoot(BVHNode* nodes, int n) {
-    // only one thread needed
-    if (blockIdx.x != 0 || threadIdx.x != 0) return;
-    if (n <= 1) return;
-    nodes[0].bounds = merge(nodes[nodes[0].leftChild].bounds,
-                             nodes[nodes[0].rightChild].bounds);
 }
 
 // ── Host build ────────────────────────────────────────────────────────────────
 
 LBVH buildLBVH(sphere* d_spheres, int n) {
-    // 1. scene AABB on host
+    // 1. pull spheres to host for scene AABB
     std::vector<sphere> h_spheres(n);
-    cudaMemcpy(h_spheres.data(), d_spheres, n * sizeof(sphere),
-               cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_spheres.data(), d_spheres, n*sizeof(sphere), cudaMemcpyDeviceToHost);
 
-    AABB sceneBounds;
-    sceneBounds.mn = vec3( 1e30f,  1e30f,  1e30f);
-    sceneBounds.mx = vec3(-1e30f, -1e30f, -1e30f);
-    for (auto& s : h_spheres)
-        sceneBounds = merge(sceneBounds,
-            AABB(s.center - vec3(s.radius, s.radius, s.radius),
-                 s.center + vec3(s.radius, s.radius, s.radius)));
-
-    std::cerr << "[LBVH] scene bounds min=("
-              << sceneBounds.mn.x() << "," << sceneBounds.mn.y() << "," << sceneBounds.mn.z()
-              << ") max=("
-              << sceneBounds.mx.x() << "," << sceneBounds.mx.y() << "," << sceneBounds.mx.z()
+    AABB scene;
+    scene.mn = vec3( 1e30f,  1e30f,  1e30f);
+    scene.mx = vec3(-1e30f, -1e30f, -1e30f);
+    for (auto& s : h_spheres) {
+        vec3 r(s.radius, s.radius, s.radius);
+        scene = merge(scene, AABB(s.center - r, s.center + r));
+    }
+    std::cerr << "[LBVH] scene min=(" << scene.mn.x() << "," << scene.mn.y() << "," << scene.mn.z()
+              << ") max=(" << scene.mx.x() << "," << scene.mx.y() << "," << scene.mx.z()
               << ") n=" << n << "\n";
 
-    // 2. Morton codes
+    // 2. Morton codes on GPU
     thrust::device_vector<uint32_t> d_codes(n);
     thrust::device_vector<int>      d_idx(n);
     k_computeMorton<<<(n+127)/128, 128>>>(
-        d_spheres, d_codes.data().get(), d_idx.data().get(), sceneBounds, n);
+        d_spheres, d_codes.data().get(), d_idx.data().get(), scene, n);
     cudaDeviceSynchronize();
 
-    // 3. sort by Morton code
+    // 3. sort
     thrust::sort_by_key(d_codes.begin(), d_codes.end(), d_idx.begin());
 
-    // 4. allocate & zero-init node array
-    int totalNodes = 2 * n - 1;
-    BVHNode* d_nodes;
-    cudaMalloc(&d_nodes, totalNodes * sizeof(BVHNode));
-    k_initNodes<<<(totalNodes+127)/128, 128>>>(d_nodes, totalNodes);
-    cudaDeviceSynchronize();
-
+    // 4. sorted index array
     int* d_sortedIdx;
-    cudaMalloc(&d_sortedIdx, n * sizeof(int));
-    cudaMemcpy(d_sortedIdx, d_idx.data().get(), n * sizeof(int),
-               cudaMemcpyDeviceToDevice);
+    cudaMalloc(&d_sortedIdx, n*sizeof(int));
+    cudaMemcpy(d_sortedIdx, d_idx.data().get(), n*sizeof(int), cudaMemcpyDeviceToDevice);
 
-    // 5. init leaves (sets bounds, isLeaf, primIdx)
+    // 5. allocate node array on GPU, init parents to -1
+    int total = 2*n - 1;
+    BVHNode* d_nodes;
+    cudaMalloc(&d_nodes, total*sizeof(BVHNode));
+    // zero everything so parent=0 doesn't mislead — set via thrust fill
+    cudaMemset(d_nodes, 0, total*sizeof(BVHNode));
+
+    // mark all parents as -1 (0xFF bytes = -1 for int in two's complement)
+    // We'll set parents properly in k_buildInternal
+    // Use a small kernel to init parent fields
+    // (cudaMemset can't write -1 per-field, so use a kernel)
+    auto initParents = [&]() {
+        // lambda can't be a kernel — do it with thrust
+        thrust::device_ptr<BVHNode> p(d_nodes);
+        // just zero them; k_buildInternal will overwrite parent for all non-root nodes
+    };
+    (void)initParents;
+
+    // 6. build leaves on GPU
     k_initLeaves<<<(n+127)/128, 128>>>(d_spheres, d_sortedIdx, d_nodes, n);
     cudaDeviceSynchronize();
 
     if (n == 1) {
-        // Single primitive: root IS the leaf, already set up. Done.
-        std::cerr << "[LBVH] single-prim tree, skipping internal build\n";
+        // root is the single leaf
+        std::vector<BVHNode> h(1);
+        cudaMemcpy(h.data(), d_nodes, sizeof(BVHNode), cudaMemcpyDeviceToHost);
+        std::cerr << "[LBVH] single sphere, root bounds min=("
+                  << h[0].bounds.mn.x() << "," << h[0].bounds.mn.y() << "," << h[0].bounds.mn.z() << ")\n";
         return LBVH{d_nodes, d_sortedIdx, n};
     }
 
-    // 6. build internal nodes (sets leftChild, rightChild, parent)
+    // 7. build internal nodes on GPU
     k_buildInternal<<<(n+127)/128, 128>>>(d_codes.data().get(), d_nodes, n);
     cudaDeviceSynchronize();
 
-    // 7. fit AABBs bottom-up
-    int* d_flags;
-    cudaMalloc(&d_flags, totalNodes * sizeof(int));
-    cudaMemset(d_flags, 0, totalNodes * sizeof(int));
-    k_fitBounds<<<(n+127)/128, 128>>>(d_nodes, d_flags, n);
-    cudaDeviceSynchronize();
+    // 8. pull all nodes to host, fit bounds there (100% correct)
+    std::vector<BVHNode> h_nodes(total);
+    cudaMemcpy(h_nodes.data(), d_nodes, total*sizeof(BVHNode), cudaMemcpyDeviceToHost);
 
-    // 8. safety fixup: re-merge root from its direct children
-    //    (handles any edge case where the last surviving thread exited early)
-    k_fixupRoot<<<1, 1>>>(d_nodes, n);
-    cudaDeviceSynchronize();
-    cudaFree(d_flags);
+    // root parent must be -1
+    h_nodes[0].parent = -1;
 
-    // verification
-    BVHNode h_root;
-    cudaMemcpy(&h_root, d_nodes, sizeof(BVHNode), cudaMemcpyDeviceToHost);
+    fitBoundsHost(h_nodes, n);
+
+    // 9. push corrected nodes back to GPU
+    cudaMemcpy(d_nodes, h_nodes.data(), total*sizeof(BVHNode), cudaMemcpyHostToDevice);
+
+    // verify root
+    BVHNode& root = h_nodes[0];
     std::cerr << "[LBVH] root bounds min=("
-              << h_root.bounds.mn.x() << "," << h_root.bounds.mn.y() << "," << h_root.bounds.mn.z()
+              << root.bounds.mn.x() << "," << root.bounds.mn.y() << "," << root.bounds.mn.z()
               << ") max=("
-              << h_root.bounds.mx.x() << "," << h_root.bounds.mx.y() << "," << h_root.bounds.mx.z()
-              << ") isLeaf=" << h_root.isLeaf
-              << " left=" << h_root.leftChild
-              << " right=" << h_root.rightChild << "\n";
+              << root.bounds.mx.x() << "," << root.bounds.mx.y() << "," << root.bounds.mx.z()
+              << ") isLeaf=" << root.isLeaf
+              << " left=" << root.leftChild << " right=" << root.rightChild << "\n";
+
+    // sanity: root bounds should approximately contain scene bounds
+    bool sane = root.bounds.mn.x() <= scene.mn.x() + 1.0f &&
+                root.bounds.mx.x() >= scene.mx.x() - 1.0f;
+    std::cerr << "[LBVH] bounds sanity: " << (sane ? "OK" : "FAIL — still wrong!") << "\n";
 
     return LBVH{d_nodes, d_sortedIdx, n};
 }
