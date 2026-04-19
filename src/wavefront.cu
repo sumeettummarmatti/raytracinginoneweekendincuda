@@ -178,7 +178,7 @@ __global__ void k_shadeMetal(RayState* states, int* queue,
 
     if (dot(scattered, rec.normal) <= 0.0f) { s.alive = false; return; }
     s.r          = ray(rec.p, scattered);
-    s.throughput *= mat->albedo;
+    s.throughput *= mat.albedo;
     s.depth++;
     if (s.depth >= MAX_DEPTH) s.alive = false;
 }

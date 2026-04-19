@@ -10,7 +10,7 @@ class sphere: public hitable  {
         __host__ __device__ sphere(vec3 cen, float r, material* m) : center(cen), radius(r), mat_ptr(m) {
             // Baseline only uses mat_ptr, so we don't need to populate 'mat' here.
         }
-        __device__ virtual bool hit(const ray& r, float tmin, float tmax, hit_record& rec) const;
+        __host__ __device__ virtual bool hit(const ray& r, float tmin, float tmax, hit_record& rec) const;
         vec3 center;
         float radius;
         material* mat_ptr;
@@ -19,7 +19,7 @@ class sphere: public hitable  {
 
 // __device__ inline gives weak linkage — safe to include in multiple .cu files
 // without RDC, and still works in single-TU baseline build.
-__device__ inline bool sphere::hit(const ray& r, float t_min, float t_max, hit_record& rec) const {
+__host__ __device__ inline bool sphere::hit(const ray& r, float t_min, float t_max, hit_record& rec) const {
     vec3 oc = r.origin() - center;
     float a = dot(r.direction(), r.direction());
     float b = dot(oc, r.direction());
