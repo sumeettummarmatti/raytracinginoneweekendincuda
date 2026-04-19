@@ -5,6 +5,14 @@
 #include <cstdio>
 #include <iostream>
 
+// ── RNG Init ──────────────────────────────────────────────────────────────────
+__global__ void k_initRNG(curandState* rng, int numRays) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= numRays) return;
+    // same seed logic as baseline
+    curand_init(1984 + tid, 0, 0, &rng[tid]);
+}
+
 #define MAX_DEPTH 50
 
 #define gpuCheck(ans) { gpuAssert_((ans), __FILE__, __LINE__); }
@@ -262,6 +270,10 @@ void wavefrontRender(int width, int tileHeight, int yOffset, int fullHeight, int
     // Ray state + RNG
     RayState*    d_states; gpuCheck(cudaMalloc(&d_states, numRays * sizeof(RayState)));
     curandState* d_rng;    gpuCheck(cudaMalloc(&d_rng,    numRays * sizeof(curandState)));
+
+    // Initialize RNG state properly to fix the silent cuda crash!
+    k_initRNG<<<(numRays+127)/128, 128>>>(d_rng, numRays);
+    gpuCheck(cudaDeviceSynchronize());
 
     // Material queues — fixed size, never reallocated
     WavefrontQueues Q;
