@@ -58,11 +58,9 @@ __global__ void k_generateRays(RayState* states, curandState* rng,
     states[localIdx].alive      = true;
 }
 
-// ── Intersect + classify ──────────────────────────────────────────────────────
-
 __global__ void k_intersect(RayState* states,
                              const int* __restrict__ activeIn, int N,
-                             LBVH bvh, sphere* spheres,
+                             sphere* spheres, int numSpheres,
                              WavefrontQueues Q,
                              GBuffers gb, bool firstBounce)
 {
@@ -73,7 +71,17 @@ __global__ void k_intersect(RayState* states,
     RayState& s      = states[rayIdx];
 
     hit_record rec;
-    bool hit = traverseLBVH(s.r, bvh, spheres, 0.001f, 1e30f, rec);
+    bool hit = false;
+    float closest = 1e30f;
+
+    for (int i = 0; i < numSpheres; i++) {
+        hit_record temp;
+        if (spheres[i].hit(s.r, 0.001f, closest, temp)) {
+            hit = true;
+            closest = temp.t;
+            rec = temp;
+        }
+    }
 
     if (firstBounce && hit) {
         MaterialData& md = rec.mat;
@@ -245,7 +253,7 @@ __global__ void k_normalize(vec3* buf, int n, float inv_ns)
 // ── Host wavefront loop ───────────────────────────────────────────────────────
 
 void wavefrontRender(int width, int tileHeight, int yOffset, int fullHeight, int ns,
-                     camera& cam, LBVH& bvh, sphere* d_spheres,
+                     camera& cam, sphere* d_spheres,
                      int numSpheres,
                      GBuffers& gb, vec3* d_output, int gpuId)
 {
@@ -295,7 +303,7 @@ void wavefrontRender(int width, int tileHeight, int yOffset, int fullHeight, int
 
             // Intersect all active rays, classify into queues
             k_intersect<<<(N+127)/128, 128>>>(
-                d_states, src, N, bvh, d_spheres, Q, gb, firstBounce);
+                d_states, src, N, d_spheres, numSpheres, Q, gb, firstBounce);
             gpuCheck(cudaDeviceSynchronize());
 
             firstBounce = false;

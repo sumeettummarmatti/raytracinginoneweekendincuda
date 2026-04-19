@@ -17,6 +17,6 @@ struct WavefrontQueues {
 //      yOffset is where this tile starts in the full image.
 void wavefrontRender(
     int width, int tileHeight, int yOffset, int fullHeight, int ns,
-    camera& cam, LBVH& bvh, sphere* d_spheres,
+    camera& cam, sphere* d_spheres,
     int numSpheres,
     GBuffers& gb, vec3* d_output, int gpuId);

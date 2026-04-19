@@ -51,16 +51,12 @@ static void renderOnDevice(GPUTile& tile, RenderConfig& cfg)
     cudaMemset(tile.d_normal,   0, numPx * sizeof(vec3));
     cudaMemset(tile.d_denoised, 0, numPx * sizeof(vec3));
 
-    // ── build LBVH ───────────────────────────────────────────────────────────
-    std::cerr << "[GPU " << tile.deviceId << "] building LBVH...\n";
-    LBVH bvh = buildLBVH(d_spheres, numSpheres);
-
     // ── wavefront render ──────────────────────────────────────────────────────
     GBuffers gb{ tile.d_color, tile.d_albedo, tile.d_normal };
 
     // FIX: pass fullH (cfg.height) so UV mapping covers the full image correctly
     wavefrontRender(W, tileH, tile.yStart, fullH, cfg.ns,
-                    cfg.cam, bvh, d_spheres,
+                    cfg.cam, d_spheres,
                     numSpheres,
                     gb, tile.d_color, tile.deviceId);
 
@@ -77,7 +73,6 @@ static void renderOnDevice(GPUTile& tile, RenderConfig& cfg)
     // FIX: explicit sync before the caller reads d_denoised
     cudaDeviceSynchronize();
 
-    freeLBVH(bvh);
     cudaFree(d_spheres);
     // d_color/albedo/normal freed in gather step along with d_denoised
 }
