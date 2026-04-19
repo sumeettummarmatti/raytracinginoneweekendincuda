@@ -12,7 +12,6 @@ find_package(OpenImageDenoise QUIET)
 
 add_executable(rt_accel
     src/main_accel.cu
-    src/sphere.cu
     src/lbvh.cu
     src/wavefront.cu
     src/denoiser.cu
@@ -21,7 +20,6 @@ add_executable(rt_accel
 
 # Use both root (for original headers) and include/ (for new headers)
 target_include_directories(rt_accel PRIVATE . include)
-set_target_properties(rt_accel PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
 if(OpenImageDenoise_FOUND)
     target_link_libraries(rt_accel PRIVATE OpenImageDenoise cuda)
