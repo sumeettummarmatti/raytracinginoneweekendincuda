@@ -4,8 +4,10 @@ project(cuda_raytracer CUDA CXX)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CXX_STANDARD  17)
 
-# Detect host architecture or fallback to common ones
-set(CMAKE_CUDA_ARCHITECTURES native)
+# Fat Binary: support all common architectures (Pascal, Volta, Turing, Ampere)
+if(NOT CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES 60 70 75 80)
+endif()
 
 # OIDN
 find_package(OpenImageDenoise QUIET)

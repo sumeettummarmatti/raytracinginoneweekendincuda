@@ -7,7 +7,13 @@ NVCC           = $(CUDA_PATH)/bin/nvcc -ccbin $(HOST_COMPILER)
 NVCC_DBG       =
 
 NVCCFLAGS      = $(NVCC_DBG) -m64
-GENCODE_FLAGS  = -gencode arch=compute_60,code=sm_60
+
+# Generic detection: Try to find GPU arch, fallback to sm_75
+DETECTED_ARCH := $(shell nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n 1 | sed 's/\.//' 2>/dev/null)
+ifeq ($(DETECTED_ARCH),)
+    DETECTED_ARCH := 75
+endif
+GENCODE_FLAGS  = -gencode arch=compute_$(DETECTED_ARCH),code=sm_$(DETECTED_ARCH)
 
 SRCS = main.cu
 INCS = vec3.h ray.h hitable.h hitable_list.h sphere.h camera.h material.h
