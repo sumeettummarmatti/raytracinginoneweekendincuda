@@ -111,9 +111,10 @@ __global__ void k_fitBounds(BVHNode* nodes, int* flags, int n) {
     int par = nodes[cur].parent;
     while (par != -1) {
         if (atomicAdd(&flags[par], 1) == 0) return;
-        __threadfence();
+        
         nodes[par].bounds = merge(nodes[nodes[par].leftChild].bounds,
                                    nodes[nodes[par].rightChild].bounds);
+        __threadfence();
         par = nodes[par].parent;
     }
 }

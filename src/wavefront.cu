@@ -265,6 +265,11 @@ void wavefrontRender(int width, int height, int yOffset, int ns,
             int counts[4];
             cudaMemcpy(counts, Q.d_counts, 4*sizeof(int), cudaMemcpyDeviceToHost);
 
+            int totalHits = counts[0] + counts[1] + counts[2];
+            if (firstBounce) {
+                std::cerr << "[GPU " << gpuId << "] Bounce 1: Hits=" << totalHits << ", Misses=" << counts[3] << "\n";
+            }
+
             if (counts[0]) k_shadeLambertian<<<(counts[0]+127)/128,128>>>(d_states, Q.lambertian, counts[0], d_rng);
             if (counts[1]) k_shadeDielectric<<<(counts[1]+127)/128,128>>>(d_states, Q.dielectric, counts[1], d_rng);
             if (counts[2]) k_shadeMetal<<<(counts[2]+127)/128,128>>>(d_states, Q.metal, counts[2], d_rng);
