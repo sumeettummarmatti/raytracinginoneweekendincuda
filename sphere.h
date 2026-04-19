@@ -8,9 +8,7 @@ class sphere: public hitable  {
         __host__ __device__ sphere() {}
         __host__ __device__ sphere(vec3 cen, float r, MaterialData m) : center(cen), radius(r), mat(m), mat_ptr(nullptr) {}
         __host__ __device__ sphere(vec3 cen, float r, material* m) : center(cen), radius(r), mat_ptr(m) {
-            // For baseline compatibility, we don't necessarily need 'mat' populated
-            // but we can initialize it to a default/invalid state.
-            mat.type = (m ? m->type : MAT_LAMBERTIAN); 
+            // Baseline only uses mat_ptr, so we don't need to populate 'mat' here.
         }
         __device__ virtual bool hit(const ray& r, float tmin, float tmax, hit_record& rec) const;
         vec3 center;

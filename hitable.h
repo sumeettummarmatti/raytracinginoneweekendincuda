@@ -5,6 +5,15 @@
 
 class material;
 
+enum MaterialType { MAT_LAMBERTIAN = 0, MAT_DIELECTRIC, MAT_METAL };
+
+struct MaterialData {
+    MaterialType type;
+    vec3         albedo;
+    float        fuzz;
+    float        ref_idx;
+};
+
 struct hit_record
 {
     float t;
