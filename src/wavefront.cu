@@ -200,6 +200,14 @@ struct is_alive {
     __device__ bool operator()(const int x) const { return !states[x].alive; }
 };
 
+struct normalize_functor {
+    float inv_ns;
+    normalize_functor(float inv) : inv_ns(inv) {}
+    __device__ vec3 operator()(const vec3& v) const {
+        return vec3(v.x()*inv_ns, v.y()*inv_ns, v.z()*inv_ns);
+    }
+};
+
 // ── Host wavefront loop ───────────────────────────────────────────────────────
 
 void wavefrontRender(int width, int height, int yOffset, int ns,
@@ -277,13 +285,6 @@ void wavefrontRender(int width, int height, int yOffset, int ns,
     // normalize by sample count
     int totalPx = width * height;
     float inv_ns = 1.0f / float(ns);
-    struct normalize_functor {
-        float inv_ns;
-        normalize_functor(float inv) : inv_ns(inv) {}
-        __device__ vec3 operator()(const vec3& v) const {
-            return vec3(v.x()*inv_ns, v.y()*inv_ns, v.z()*inv_ns);
-        }
-    };
 
     thrust::transform(thrust::device_pointer_cast(d_output),
                       thrust::device_pointer_cast(d_output + totalPx),
