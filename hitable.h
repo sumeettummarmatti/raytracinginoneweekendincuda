@@ -3,6 +3,14 @@
 
 #include "ray.h"
 
+// Compatibility macros for plain C++ compilers (host-only)
+#ifndef __host__
+#define __host__
+#endif
+#ifndef __device__
+#define __device__
+#endif
+
 class material;
 
 enum MaterialType { MAT_LAMBERTIAN = 0, MAT_DIELECTRIC, MAT_METAL };

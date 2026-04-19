@@ -5,6 +5,7 @@
 #include <string>
 #include <cstdlib>   // rand, srand
 #include <ctime>
+#include <cmath>
 #include "vec3.h"
 #include "camera.h"
 #include "sphere.h"
@@ -148,13 +149,13 @@ int main(int argc, char** argv)
         for (int i = 0; i < W; i++) {
             vec3 c = framebuffer[j * W + i];
             // gamma 2 correction
-            float r = sqrtf(fmaxf(c.x(), 0.0f));
-            float g = sqrtf(fmaxf(c.y(), 0.0f));
-            float b = sqrtf(fmaxf(c.z(), 0.0f));
+            float r = std::sqrt(std::max(c.x(), 0.0f));
+            float g = std::sqrt(std::max(c.y(), 0.0f));
+            float b = std::sqrt(std::max(c.z(), 0.0f));
             // clamp to [0,1] before quantising
-            r = fminf(r, 1.0f);
-            g = fminf(g, 1.0f);
-            b = fminf(b, 1.0f);
+            r = std::min(r, 1.0f);
+            g = std::min(g, 1.0f);
+            b = std::min(b, 1.0f);
             std::cout << int(255.99f * r) << ' '
                       << int(255.99f * g) << ' '
                       << int(255.99f * b) << '\n';
