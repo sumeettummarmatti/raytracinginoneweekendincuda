@@ -1,7 +1,5 @@
 #include "wavefront.h"
-#include <thrust/copy_if.h>
 #include <thrust/sequence.h>
-#include <thrust/transform.h>
 #include <thrust/device_ptr.h>
 #include "material.h"
 #include <cstdio>
