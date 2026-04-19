@@ -18,7 +18,8 @@ __device__ vec3 random_in_unit_disk(curandState *local_rand_state) {
 
 class camera {
 public:
-    __device__ camera(vec3 lookfrom, vec3 lookat, vec3 vup, float vfov, float aspect, float aperture, float focus_dist) { // vfov is top to bottom in degrees
+    __host__ __device__ camera() {}
+    __host__ __device__ camera(vec3 lookfrom, vec3 lookat, vec3 vup, float vfov, float aspect, float aperture, float focus_dist) { // vfov is top to bottom in degrees
         lens_radius = aperture / 2.0f;
         float theta = vfov*((float)M_PI)/180.0f;
         float half_height = tanf(theta/2.0f);
