@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 #include <vector>
 #include <chrono>
 #include <string>
@@ -92,6 +93,11 @@ int main(int argc, char** argv) {
     auto end_time = std::chrono::high_resolution_clock::now();
     std::chrono::duration<float, std::milli> duration = end_time - start_time;
     std::cerr << "TIMING: total_wall_ms=" << duration.count() << "\n";
+
+    // Export timing to accel_time.txt for the benchmark script
+    std::ofstream tf("accel_time.txt");
+    tf << "TIMING: total_wall_ms=" << duration.count() << "\n";
+    tf.close();
 
     // write PPM
     std::cout << "P3\n" << W << " " << H << "\n255\n";
