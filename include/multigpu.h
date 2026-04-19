@@ -7,11 +7,14 @@
 #include <vector>
 
 struct RenderConfig {
-    int width, height, ns;
-    camera cam;
-    sphere* h_spheres;   // host-side sphere array
-    int numSpheres;
+    int     width;
+    int     height;
+    int     ns;
+    camera  cam;
+    sphere* h_spheres;   // host-side flat sphere array (MaterialData embedded)
+    int     numSpheres;
 };
 
-// renders full image using all available GPUs, returns host framebuffer
+// Renders the full image using all available GPUs.
+// Returns a host-side framebuffer (linear, top-row-last, linear RGB, not gamma corrected).
 std::vector<vec3> multiGPURender(RenderConfig& cfg);

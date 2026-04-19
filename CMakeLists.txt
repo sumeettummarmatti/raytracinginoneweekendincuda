@@ -4,14 +4,18 @@ project(cuda_raytracer CUDA CXX)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CXX_STANDARD  17)
 
-# Fat Binary: support all common architectures (Pascal, Volta, Turing, Ampere)
+# Auto-detect GPU architecture — works on Kaggle T4, Colab V100/A100, local RTX
 if(NOT CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES 60 70 75 80)
+    set(CMAKE_CUDA_ARCHITECTURES native)
 endif()
 
-# OIDN
+# ── OIDN (optional) ───────────────────────────────────────────────────────────
 find_package(OpenImageDenoise QUIET)
 
+# ── Sources ───────────────────────────────────────────────────────────────────
+# FIX: src/sphere.cu is NOT included here.
+#      sphere::hit is __host__ __device__ inline in sphere.h.
+#      Including sphere.cu would cause an ODR violation (two definitions).
 add_executable(rt_accel
     src/main_accel.cu
     src/lbvh.cu
@@ -20,16 +24,18 @@ add_executable(rt_accel
     src/multigpu.cu
 )
 
-# Use both root (for original headers) and include/ (for new headers)
+# Include both root (original headers) and include/ (new headers)
 target_include_directories(rt_accel PRIVATE . include)
 
-# Add standard CUDA stub paths for Kaggle/Colab environments
+# CUDA stub paths for Kaggle / Colab
 link_directories(/usr/local/cuda/lib64/stubs /usr/local/cuda/lib64)
 
 if(OpenImageDenoise_FOUND)
+    message(STATUS "OIDN found — denoising enabled")
     target_link_libraries(rt_accel PRIVATE OpenImageDenoise cudart)
 else()
-    target_compile_definitions(rt_accel PRIVATE "NO_OIDN")
+    message(STATUS "OIDN NOT found — denoising will be skipped at runtime")
+    target_compile_definitions(rt_accel PRIVATE NO_OIDN)
     target_link_libraries(rt_accel PRIVATE cudart)
 endif()
 
